@@ -602,7 +602,12 @@ async function startServer() {
           modelSource: "trained-cnn"
         };
 
-        if (hasGemini) {
+        // Enrichment is optional and adds real latency (a full Gemini vision
+        // round-trip on top of the CNN call). Set ENABLE_GEMINI_ENRICHMENT=false
+        // to skip it and return the fast, model-only result.
+        const enrichmentEnabled = process.env.ENABLE_GEMINI_ENRICHMENT !== "false";
+
+        if (hasGemini && enrichmentEnabled) {
           try {
             let mimeType = "image/jpeg";
             let base64Data = imageBase64;

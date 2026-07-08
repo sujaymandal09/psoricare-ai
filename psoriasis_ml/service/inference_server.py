@@ -109,6 +109,17 @@ def run_inference(image: Image.Image) -> PredictionResponse:
     )
 
 
+@app.on_event("startup")
+def preload_model():
+    """Load the model once at startup so the first real request isn't slow."""
+    try:
+        get_model()
+        print(f"Model preloaded successfully from {MODEL_PATH} on {DEVICE}")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: could not preload model at startup: {e}")
+        print("The service will retry loading on the first /predict request.")
+
+
 @app.get("/health")
 def health():
     try:
