@@ -170,7 +170,19 @@ export function SkinAnalysisView({ analyses, onAnalysisSubmit }: SkinAnalysisVie
     }
   };
 
-  const renderRatingBar = (label: string, value: number, colorClass: string) => {
+  const renderRatingBar = (label: string, value: number | null | undefined, colorClass: string) => {
+    if (value === null || value === undefined) {
+      return (
+        <div className="space-y-1.5">
+          <div className="flex justify-between items-center text-xs">
+            <span className="font-semibold text-gray-700">{label}</span>
+            <span className="font-mono font-bold text-gray-400">Not scored by this model</span>
+          </div>
+          <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden border border-gray-100" />
+        </div>
+      );
+    }
+
     const ticks = [0, 1, 2, 3, 4];
     const labels = ["None", "Mild", "Moderate", "Severe", "Very Severe"];
 
@@ -366,9 +378,9 @@ export function SkinAnalysisView({ analyses, onAnalysisSubmit }: SkinAnalysisVie
                     </p>
                   </div>
                   <div className={`rounded px-1.5 py-0.5 text-[8px] font-bold uppercase ${
-                    anl.result?.severity === "severe" 
+                    anl.result?.severity?.includes("severe")
                       ? "bg-red-50 text-red-700 border border-red-100" 
-                      : anl.result?.severity === "moderate" 
+                      : anl.result?.severity?.includes("moderate")
                       ? "bg-amber-50 text-amber-700 border border-amber-100" 
                       : "bg-emerald-50 text-emerald-700 border border-emerald-100"
                   }`}>
@@ -417,9 +429,9 @@ export function SkinAnalysisView({ analyses, onAnalysisSubmit }: SkinAnalysisVie
                   </div>
 
                   <span className={`rounded-xl px-3 py-1 font-extrabold uppercase text-xs border tracking-wider shadow-sm ${
-                    activeAnalysis.result?.severity === 'severe'
+                    activeAnalysis.result?.severity?.includes('severe')
                       ? "bg-red-50 text-red-700 border-red-100"
-                      : activeAnalysis.result?.severity === 'moderate'
+                      : activeAnalysis.result?.severity?.includes('moderate')
                       ? "bg-amber-50 text-amber-700 border-amber-100"
                       : "bg-emerald-50 text-emerald-700 border-emerald-100"
                   }`}>

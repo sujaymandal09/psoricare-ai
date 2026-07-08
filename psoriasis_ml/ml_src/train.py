@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from dataset import PsoriasisDataset, get_data_transforms
 from model import PsoriasisClassifier
 
-def train_model(data_dir, num_epochs=15, batch_size=16, lr=0.001):
+def train_model(data_dir, num_epochs=15, batch_size=16, lr=0.001, output_path="../best_psoriasis_model.pth"):
     """
     Main training and validation loop.
     Saves the trained model state to 'best_psoriasis_model.pth'.
@@ -95,14 +95,29 @@ def train_model(data_dir, num_epochs=15, batch_size=16, lr=0.001):
             # Save best checkpoint
             if v_acc > best_acc:
                 best_acc = v_acc
-                torch.save(model.state_dict(), "best_psoriasis_model.pth")
-                print("Saved new best model checkpoint.")
+                torch.save(model.state_dict(), output_path)
+                print(f"Saved new best model checkpoint to {output_path}")
         else:
             # If no validation set, save current epoch weights
-            torch.save(model.state_dict(), "best_psoriasis_model.pth")
+            torch.save(model.state_dict(), output_path)
             
     print("Training finished successfully.")
 
 if __name__ == "__main__":
-    # Example usage (user would run this from command line/notebook)
-    train_model(data_dir="./dataset", num_epochs=10)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train the psoriasis classifier.")
+    parser.add_argument("--data-dir", default="../dataset_clean", help="Dataset root (must contain train/ and val/ subfolders)")
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--output", default="../best_psoriasis_model.pth", help="Where to save the checkpoint")
+    args = parser.parse_args()
+
+    train_model(
+        data_dir=args.data_dir,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        output_path=args.output,
+    )
