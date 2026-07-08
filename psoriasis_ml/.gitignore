@@ -29,4 +29,4 @@ Thumbs.db
 .env.*
 .venv/
 __pycache__/
-.env.example
+!.env.example

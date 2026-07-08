@@ -50,6 +50,9 @@ function getGeminiClient(): GoogleGenAI {
   return aiClient;
 }
 
+// NOTE: this points at a placeholder domain, not a real xAI/Grok endpoint - it was
+// already broken before this change. Left as-is since it's out of scope for the
+// model-integration work below; fix separately if the Grok chat fallback is needed.
 const GROK_API_URL = "https://api.grok.ai/v1/completions";
 
 async function callGrokCompletion(prompt: string): Promise<any> {
@@ -78,6 +81,41 @@ async function callGrokCompletion(prompt: string): Promise<any> {
   }
 
   return response.json();
+}
+
+// --- Trained CNN inference service (psoriasis_ml/service/inference_server.py) ---
+// This is the dissertation's actual ResNet-18 model, served over FastAPI.
+// Falls back gracefully to Gemini-only analysis if the service is unreachable.
+const MODEL_SERVICE_URL = process.env.MODEL_SERVICE_URL || "http://localhost:8001";
+
+interface ModelPrediction {
+  diagnosis: "psoriasis" | "non_psoriasis";
+  confidence: number;
+  psoriasis_probability: number;
+  non_psoriasis_probability: number;
+}
+
+async function callModelService(imageBase64: string): Promise<ModelPrediction | null> {
+  try {
+    const response = await fetch(`${MODEL_SERVICE_URL}/predict-base64`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // Short timeout via AbortController so a dead service doesn't hang requests
+      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({ imageBase64 })
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.error(`Model service returned ${response.status}: ${body}`);
+      return null;
+    }
+
+    return (await response.json()) as ModelPrediction;
+  } catch (error) {
+    console.error("Model service unreachable, falling back to Gemini-only analysis:", error);
+    return null;
+  }
 }
 
 // Ensure database file exists with elegant seeded data
@@ -527,82 +565,130 @@ async function startServer() {
         return;
       }
 
+      // --- Step 1: Primary classification from OUR trained ResNet-18 model ---
+      const modelPrediction = await callModelService(imageBase64);
       const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-      const hasGrok = Boolean(process.env.GROK_API_KEY);
 
-      if (!hasGemini) {
-        if (hasGrok) {
-          res.status(503).json({
-            error: "Dermatological image assessment requires GEMINI_API_KEY because this endpoint currently performs image-based analysis through Gemini. Grok is available for chat and text guidance, but image screening is not supported by Grok in this app yet."
-          });
-          return;
-        }
-
-        res.status(503).json({ 
-          error: "Dermatological AI assessment is currently unavailable because no Gemini or Grok API key is configured on the server. Add GEMINI_API_KEY for image analysis or GROK_API_KEY for chat/text guidance." 
+      if (!modelPrediction && !hasGemini) {
+        res.status(503).json({
+          error: "Dermatological AI assessment is currently unavailable: the trained model service could not be reached and no GEMINI_API_KEY is configured for fallback. Start the model service (psoriasis_ml/service) or set GEMINI_API_KEY."
         });
         return;
       }
 
-      // Extract raw base64 data and mine type
-      let mimeType = "image/jpeg";
-      let base64Data = imageBase64;
-      if (imageBase64.startsWith("data:")) {
-        const parts = imageBase64.split(",");
-        const meta = parts[0];
-        base64Data = parts[1];
-        const mimeMatch = meta.match(/data:([^;]+);/);
-        if (mimeMatch) {
-          mimeType = mimeMatch[1];
-        }
-      }
+      let parsedResult: any;
 
-      // Initialize Gemini Client
-      const ai = getGeminiClient();
+      if (modelPrediction) {
+        const isPsoriasis = modelPrediction.diagnosis === "psoriasis";
 
-      // Query Gemini
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data,
-            },
-          },
-          "Perform a comprehensive visual screening of this skin lesion. Formulate clinical indicators of psoriasis or other diseases and fill out the response schema."
-        ],
-        config: {
-          systemInstruction: "You are an expert dermatological AI screening assistant specializing in psoriasis classification, visual inspection, and severity scoring. Analyze the provided image of a skin lesion. Grade the severity of three primary physical signs: Erythema (redness), Induration (plaque thickness), and Desquamation (scaling) each on a scale of 0 (none) to 4 (very severe). Classify the lesion as Psoriasis (specifying type such as plaque, guttate, inverse, erythrodermic, pustular, or scalp, if clear), or other common look-alikes like Eczema, Dermatitis, Dry Skin, or Healthy Skin. Write a professional visual description and provide practical skin-care suggestions. Always output a strict medical disclaimer explaining that this is an automated clinical tool, not a certified diagnosis.",
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              diagnosis: { type: Type.STRING, description: "Classification of skin condition, e.g. Plaque Psoriasis, Guttate Psoriasis, Eczema, Dermatitis, Dry Skin, Healthy Skin." },
-              confidence: { type: Type.NUMBER, description: "Confidence probability between 0 and 100." },
-              severity: { type: Type.STRING, description: "Overall visual severity classification: none, mild, moderate, severe." },
-              erythema: { type: Type.NUMBER, description: "Redness severity rating from 0 (none) to 4 (very severe)." },
-              induration: { type: Type.NUMBER, description: "Plaque thickness/height rating from 0 (none) to 4 (very severe)." },
-              desquamation: { type: Type.NUMBER, description: "Scaling/flaking rating from 0 (none) to 4 (very severe)." },
-              description: { type: Type.STRING, description: "Detailed clinical visual explanation of the lesion." },
-              recommendations: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Key practical skin management steps."
-              },
-              disclaimer: { type: Type.STRING, description: "Crucial medical disclaimer." }
-            },
-            required: ["diagnosis", "confidence", "severity", "erythema", "induration", "desquamation", "description", "recommendations", "disclaimer"]
+        parsedResult = {
+          diagnosis: isPsoriasis ? "Psoriasis" : "Non-Psoriasis / Other Skin Condition",
+          confidence: modelPrediction.confidence,
+          severity: isPsoriasis
+            ? (modelPrediction.confidence >= 85 ? "moderate-severe" : "mild-moderate")
+            : "n/a",
+          erythema: null,
+          induration: null,
+          desquamation: null,
+          description: `The trained classification model assessed this image as "${modelPrediction.diagnosis}" with ${modelPrediction.confidence}% confidence (psoriasis probability: ${modelPrediction.psoriasis_probability}%, non-psoriasis probability: ${modelPrediction.non_psoriasis_probability}%).`,
+          recommendations: isPsoriasis
+            ? [
+                "Consult a dermatologist to confirm diagnosis and discuss treatment options.",
+                "Avoid scratching or irritating the affected area.",
+                "Keep skin moisturized to reduce scaling and discomfort."
+              ]
+            : ["No strong psoriasis indicators detected. If symptoms persist, consult a dermatologist for a full evaluation."],
+          disclaimer: "This assessment is generated by an automated research model (ResNet-18, trained on a limited dataset) and is NOT a certified medical diagnosis. Always consult a qualified dermatologist.",
+          modelSource: "trained-cnn"
+        };
+
+        if (hasGemini) {
+          try {
+            let mimeType = "image/jpeg";
+            let base64Data = imageBase64;
+            if (imageBase64.startsWith("data:")) {
+              const parts = imageBase64.split(",");
+              base64Data = parts[1];
+              const mimeMatch = parts[0].match(/data:([^;]+);/);
+              if (mimeMatch) mimeType = mimeMatch[1];
+            }
+
+            const ai = getGeminiClient();
+            const response = await ai.models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: [
+                { inlineData: { mimeType, data: base64Data } },
+                `A trained classification model has already determined this image shows "${modelPrediction.diagnosis}" (${modelPrediction.confidence}% confidence). Write a short professional visual description of what's visible in the image and 2-3 practical skin-care recommendations consistent with that classification. Do not contradict or re-classify the diagnosis.`
+              ],
+              config: {
+                systemInstruction: "You are a dermatological visual-description assistant. You do NOT make or override diagnoses - a specialized model has already classified the image. Your job is only to describe what's visually apparent and suggest general skin-care steps.",
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    description: { type: Type.STRING },
+                    recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
+                  },
+                  required: ["description", "recommendations"]
+                }
+              }
+            });
+
+            const resultText = response.text;
+            if (resultText) {
+              const enrichment = JSON.parse(resultText.trim());
+              parsedResult.description = enrichment.description || parsedResult.description;
+              parsedResult.recommendations = enrichment.recommendations || parsedResult.recommendations;
+            }
+          } catch (enrichError) {
+            console.error("Gemini enrichment failed, keeping model-only result:", enrichError);
           }
         }
-      });
+      } else {
+        let mimeType = "image/jpeg";
+        let base64Data = imageBase64;
+        if (imageBase64.startsWith("data:")) {
+          const parts = imageBase64.split(",");
+          base64Data = parts[1];
+          const mimeMatch = parts[0].match(/data:([^;]+);/);
+          if (mimeMatch) mimeType = mimeMatch[1];
+        }
 
-      const resultText = response.text;
-      if (!resultText) {
-        throw new Error("No response returned from the AI model.");
+        const ai = getGeminiClient();
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [
+            { inlineData: { mimeType, data: base64Data } },
+            "Perform a comprehensive visual screening of this skin lesion. Formulate clinical indicators of psoriasis or other diseases and fill out the response schema."
+          ],
+          config: {
+            systemInstruction: "You are an expert dermatological AI screening assistant specializing in psoriasis classification, visual inspection, and severity scoring. Grade Erythema, Induration, and Desquamation each 0-4. Classify as Psoriasis (with type if clear) or a look-alike (Eczema, Dermatitis, Dry Skin, Healthy Skin). Always include a medical disclaimer that this is not a certified diagnosis.",
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                diagnosis: { type: Type.STRING },
+                confidence: { type: Type.NUMBER },
+                severity: { type: Type.STRING },
+                erythema: { type: Type.NUMBER },
+                induration: { type: Type.NUMBER },
+                desquamation: { type: Type.NUMBER },
+                description: { type: Type.STRING },
+                recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
+                disclaimer: { type: Type.STRING }
+              },
+              required: ["diagnosis", "confidence", "severity", "erythema", "induration", "desquamation", "description", "recommendations", "disclaimer"]
+            }
+          }
+        });
+
+        const resultText = response.text;
+        if (!resultText) {
+          throw new Error("No response returned from the AI model.");
+        }
+        parsedResult = JSON.parse(resultText.trim());
+        parsedResult.modelSource = "gemini-fallback";
       }
-
-      const parsedResult = JSON.parse(resultText.trim());
 
       const db = getDb();
       const newAnalysis: SkinAnalysis = {
