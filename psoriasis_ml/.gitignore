@@ -25,3 +25,8 @@ results/
 # OS
 .DS_Store
 Thumbs.db
+.env
+.env.*
+.venv/
+__pycache__/
+.env.example
