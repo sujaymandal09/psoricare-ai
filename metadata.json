@@ -1,0 +1,6 @@
+{
+  "name": "PsoriCare AI",
+  "description": "An AI-powered dermatological screening application supporting PASI score calculation, daily symptom logs, flare-up trend analytics, and chat consulting.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
