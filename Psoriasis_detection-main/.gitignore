@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Conda
+.env
+.conda
+
+# VS Code
+.vscode/
+
+# Data
+data/raw/
+data/processed/
+data/augmented/
+
+# Models
+models/*.h5
+models/checkpoints/
+
+# Results
+results/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,152 +1,213 @@
-# Apex Secure Banking System
+# PsoriCare AI
 
-Apex Secure is a full-stack, professional simulated digital banking platform built with **React (Vite), TypeScript, Tailwind CSS, Recharts**, and **Node.js (Express)**.
+PsoriCare AI is a full-stack psoriasis care platform combining a trained computer-vision
+model with a web app for skin assessment, severity tracking, and patient self-management.
+It's built as an undergraduate dissertation project, pairing a ResNet-18 image classifier
+with a React/Express clinical-style dashboard.
 
-Designed for educational audits, security studies, and simulated wire trace validation, this system provides a real-time ledger environment where customers can create accounts, execute secure deposits, withdrawals, and instant wire transfers, while administrators monitor the ledger ecosystem, toggle account active/suspended statuses, and inspect real-time platform audit logs.
-
----
-
-## 🛠️ Project Architecture Diagram
-
-The application uses a unified full-stack architecture running behind an Nginx reverse-proxy on **Port 3000** for container environments:
-
-```
-┌────────────────────────────────────────────────────────┐
-│               Client-Side User Interface                │
-│             (Vite React SPA + Tailwind CSS)            │
-└───────────────────────────┬────────────────────────────┘
-                            │
-              REST API Requests / JSON Payloads
-                            │
-┌───────────────────────────▼────────────────────────────┐
-│              Server-Side Controller (Node.js)          │
-│         (Express.js API Engine + JWT Security)         │
-└───────────────────────────┬────────────────────────────┘
-                            │
-               Read/Write Relational Transactions
-                            │
-┌───────────────────────────▼────────────────────────────┐
-│                Persistent File Database                │
-│                (Relational db.json Ledger)             │
-└────────────────────────────────────────────────────────┘
-```
+> **Disclaimer:** This project is a research/academic tool, not a certified medical device.
+> Nothing it outputs is a diagnosis. Always consult a qualified dermatologist for actual
+> skin conditions.
 
 ---
 
-## 📊 Database Relational ER Diagram
+## What it does
+
+- **Skin Analysis** — upload a photo of a skin lesion and get a psoriasis / non-psoriasis
+  classification from a trained ResNet-18 model, optionally enriched with a descriptive
+  write-up via Gemini.
+- **PASI Calculator** — manual Psoriasis Area and Severity Index scoring tool.
+- **Symptom Tracker** — log and visualize symptoms over time.
+- **AI Consult** — chat-based guidance assistant.
+- **Auth & Profiles** — JWT-based login, per-user history of analyses and logs.
+
+---
+
+## Architecture
+
+This project is two systems working together:
 
 ```
- +----------------------------------+          +----------------------------------+
- |              USERS               |          |             SESSIONS             |
- +----------------------------------+          +----------------------------------+
- | id (PK)             : varchar    | <------+ | id (PK)             : varchar    |
- | username            : varchar    |          | user_id (FK)        : varchar    |
- | email               : varchar    |          | access_token        : text       |
- | passwordHash        : text       |          | created_at          : timestamp  |
- | isAdmin             : boolean    |          | expires_at          : timestamp  |
- | created_at          : timestamp  |          +----------------------------------+
- | updated_at          : timestamp  |
- +----------------------------------+
-   |
-   | 1:N
-   v
- +----------------------------------+          +----------------------------------+
- |             ACCOUNTS             |          |            AUDIT LOGS            |
- +----------------------------------+          +----------------------------------+
- | id (PK)             : varchar    |          | id (PK)             : varchar    |
- | user_id (FK)        : varchar    |          | user_id (FK/null)   : varchar    |
- | account_number (UK) : varchar    | <------+ | event_type          : varchar    |
- | account_type        : varchar    |   1:N    | description         : text       |
- | balance             : decimal    | (sender) | created_at          : timestamp  |
- | status              : varchar    |          +----------------------------------+
- | created_at          : timestamp  |
- +----------------------------------+
-   |                  ^
-   | 1:N (receiver)   |
-   +---------+--------+
-             |
-             v
- +----------------------------------+
- |           TRANSACTIONS           |
- +----------------------------------+
- | id (PK)             : varchar    |
- | transaction_id (UK) : varchar    |
- | sender_account      : varchar    | (FK -> Accounts.account_number)
- | receiver_account    : varchar    | (FK -> Accounts.account_number)
- | amount              : decimal    |
- | description         : text       |
- | transaction_type    : varchar    | (deposit, withdraw, transfer)
- | status              : varchar    |
- | created_at          : timestamp  |
- +----------------------------------+
+┌─────────────────────┐        ┌──────────────────────┐        ┌───────────────────────┐
+│   React + Vite SPA   │  HTTP  │  Express (server.ts)  │  HTTP  │  FastAPI model service │
+│   (src/)             │◄──────►│  Node backend + auth   │◄──────►│  (psoriasis_ml/service)│
+└─────────────────────┘        └──────────────────────┘        └───────────────────────┘
+                                          │
+                                          ▼
+                                 Gemini API (optional,
+                                 descriptive enrichment
+                                 or fallback classifier)
+```
+
+- **Frontend** (`src/`): React 19 + Vite + Tailwind, single-page app with tab-based
+  navigation (Dashboard, Skin Analysis, PASI Calculator, Symptom Tracker, AI Consult, Profile).
+- **Backend** (`server.ts`): Express server handling auth, a flat-file JSON store
+  (`db.json`), and the `/api/analysis/create` endpoint that orchestrates classification.
+- **Model service** (`psoriasis_ml/service/`): a small FastAPI wrapper around the trained
+  PyTorch checkpoint, serving real-time inference over HTTP.
+- **ML pipeline** (`psoriasis_ml/ml_src/`): dataset preparation, training, and evaluation
+  code used to produce the checkpoint the model service loads.
+
+The `/api/analysis/create` endpoint calls the trained model first — that's the actual
+classifier. If `GEMINI_API_KEY` is set, Gemini is used only to generate a descriptive
+write-up and recommendations consistent with the model's result (never to override the
+classification). If the model service is unreachable, the app can fall back to a
+Gemini-only assessment when a key is configured.
+
+---
+
+## Project structure
+
+```
+psoricare-ai/
+├── server.ts                      # Express backend, API routes, auth
+├── src/                           # React frontend
+│   ├── App.tsx
+│   └── components/
+│       ├── AuthView.tsx
+│       ├── DashboardView.tsx
+│       ├── SkinAnalysisView.tsx   # Upload + view analysis results
+│       ├── PasiCalculatorView.tsx
+│       ├── SymptomTrackerView.tsx
+│       ├── AiConsultView.tsx
+│       ├── ProfileView.tsx
+│       ├── Sidebar.tsx
+│       └── Navbar.tsx
+├── db.json                        # Flat-file datastore (dev/demo only)
+├── .env.example                   # Required environment variables
+└── psoriasis_ml/                  # ML pipeline + inference service
+    ├── best_psoriasis_model.pth   # Trained checkpoint
+    ├── ml_src/
+    │   ├── model.py               # ResNet-18 classifier definition
+    │   ├── dataset.py             # Dataset loading + transforms
+    │   ├── train.py               # Training entry point (CLI)
+    │   ├── evaluate.py            # Evaluation utilities
+    │   ├── predict.py             # Standalone prediction script
+    │   ├── rebuild_split.py       # Leak-free stratified train/val split
+    │   └── augmentation.py
+    ├── service/
+    │   ├── inference_server.py    # FastAPI wrapper for the trained model
+    │   └── requirements.txt
+    ├── dataset/                   # train/ + val/ image folders (not in git)
+    ├── notebooks/                 # Exploration/training notebooks
+    └── docs/                      # Dissertation notes, proposal, references
 ```
 
 ---
 
-## 🚀 Installation & Local Running Guide
+## Setup
 
-### Prerequisite Setup
-Make sure you have Node.js (v18 or higher) installed on your system.
+### Prerequisites
+- Node.js 18+ (uses the built-in `fetch` API)
+- Python 3.9+ with `pip`
+- ~2GB free disk space for PyTorch (CPU build is fine; no GPU required)
 
-### 1. Install Dependencies
-Run the installation command in your terminal to fetch all client-side and server-side components:
+### 1. Clone and install frontend/backend dependencies
 ```bash
+git clone https://github.com/sujaymandal09/psoricare-ai.git
+cd psoricare-ai
 npm install
 ```
 
-### 2. Run the Development Server
-Launch the unified full-stack dev server using:
+### 2. Set up environment variables
+Copy `.env.example` to `.env` and fill in the values:
+```bash
+cp .env.example .env
+```
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `JWT_SECRET` | Yes | Signs auth tokens. Generate with `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
+| `MODEL_SERVICE_URL` | No (defaults to `http://localhost:8001`) | Where the FastAPI model service is running |
+| `GEMINI_API_KEY` | No | Enables descriptive-text enrichment on top of the model's classification, and Gemini-only fallback if the model service is down |
+| `ENABLE_GEMINI_ENRICHMENT` | No (defaults to `true`) | Set to `false` to skip the Gemini enrichment step and return faster, model-only results |
+
+### 3. Install the model service dependencies
+```bash
+cd psoriasis_ml/service
+pip install -r requirements.txt --break-system-packages
+```
+
+### 4. Run everything (two terminals)
+
+**Terminal 1 — model inference service:**
+```bash
+cd psoriasis_ml/service
+uvicorn inference_server:app --port 8001
+```
+Check it's healthy at [http://localhost:8001/health](http://localhost:8001/health) — should
+report `"model_loaded": true`.
+
+**Terminal 2 — web app:**
 ```bash
 npm run dev
 ```
-The server will boot on `http://localhost:3000`, proxying both API endpoints and the hot Vite static client.
-
-### 3. Production Compilation & Build
-To build a production bundle containing esbuild-compiled CommonJS server modules and optimized static assets, run:
-```bash
-npm run build
-```
-Start the compiled production container server using:
-```bash
-npm start
-```
+Open the URL it prints (typically `http://localhost:5173`).
 
 ---
 
-## 🔒 Security Credentials & Seed Accounts
-The ledger comes pre-seeded with multiple bank accounts and 10+ historical transaction charts. You can log in instantly using the helper **Quick-Fill** panel on the login page:
+## Training / retraining the model
 
-1. **Customer Role** (Savings & Current balances):
-   - **Username**: `john_doe`
-   - **Password**: `john123`
-2. **Administrator Role** (Consolidated platform metrics, status locks):
-   - **Username**: `admin`
-   - **Password**: `admin123`
+The included checkpoint (`psoriasis_ml/best_psoriasis_model.pth`) is a ResNet-18 binary
+classifier (`psoriasis` / `non_psoriasis`), fine-tuned via transfer learning.
+
+To retrain on your own dataset:
+
+```bash
+cd psoriasis_ml/ml_src
+
+# 1. Rebuild a leak-free, stratified train/val split (recommended before every retrain)
+python3 rebuild_split.py --source ../dataset --output ../dataset_clean --val-ratio 0.2
+
+# 2. Train
+python3 train.py --data-dir ../dataset_clean --epochs 15
+```
+
+`train.py` flags:
+| Flag | Default | Description |
+|---|---|---|
+| `--data-dir` | `../dataset_clean` | Dataset root, must contain `train/` and `val/` per-class subfolders |
+| `--epochs` | `15` | Training epochs |
+| `--batch-size` | `16` | Batch size |
+| `--lr` | `0.001` | Learning rate |
+| `--output` | `../best_psoriasis_model.pth` | Where to save the checkpoint |
+
+The checkpoint is saved to the path the model service already expects, so restarting
+`uvicorn` after training picks up the new model automatically.
+
+**Dataset expectations:** both classes should be sourced from a comparable photographic
+domain (e.g. both plain clinical photos, not one dermoscopic and one clinical) — mismatched
+sourcing lets the model learn superficial photo-style shortcuts instead of actual skin
+features. `rebuild_split.py` also deduplicates by image content to prevent train/val leakage.
 
 ---
 
-## 📡 REST API Documentation
+## API overview (`server.ts`)
 
-### Authentication Endpoints
-* **`POST /api/auth/register`**: Register a new customer credential.
-* **`POST /api/auth/login`**: Authenticate and retrieve Access JWT + Refresh session.
-* **`POST /api/auth/logout`**: Invalidate active tokens.
-* **`GET /api/auth/me`**: Fetch current verified session details.
-* **`POST /api/auth/update-profile`**: Update email address or change password.
+| Route | Description |
+|---|---|
+| `POST /api/auth/register` | Create an account |
+| `POST /api/auth/login` | Log in, returns a JWT |
+| `GET /api/auth/me` | Current user info |
+| `POST /api/analysis/create` | Upload an image, get a classification (model + optional Gemini enrichment) |
+| `GET /api/analysis/history` | Past analyses for the logged-in user |
+| `POST /api/pasi` | Save a PASI score entry |
+| `POST /api/symptoms` | Log a symptom entry |
+| `POST /api/chat` | AI consult chat |
 
-### Account Management Endpoints
-* **`POST /api/accounts/create`**: Create a new `savings` or `current` account tier. Generates a unique `APEX-XXXXXXX-SAV/CUR` card number automatically.
-* **`GET /api/accounts/my-accounts`**: Retrieve active bank accounts owned by the user.
-* **`GET /api/accounts/:id`**: Fetch details for a specific bank ledger.
+---
 
-### Transaction Core Endpoints
-* **`POST /api/transactions/deposit`**: Fund a verified ledger (Increases balance).
-* **`POST /api/transactions/withdraw`**: Withdraw funds from an active ledger (Validates balance limit).
-* **`POST /api/transactions/transfer`**: Transfer wire funds to any recipient account number. (Debits sender, credits receiver, generates completed ledger logs).
-* **`GET /api/transactions/history`**: Searchable, paginated audit list with filters (Type, amount range, search terms).
+## Known limitations
 
-### Administrative Controller Endpoints
-* **`GET /api/admin/stats`**: High-level platform total counts and volumes.
-* **`GET /api/admin/users`**: List of all registered users in the database.
-* **`GET /api/admin/accounts`**: Master ledger listing with **Suspend/Activate** toggle buttons.
-* **`GET /api/admin/audit-logs`**: Scrolling, real-time security events trace (logins, transfers, system toggles).
+- `db.json` is a flat-file store intended for development/demo use, not production scale.
+- The model currently outputs a binary label + confidence only — it does not predict
+  erythema/induration/desquamation sub-scores or psoriasis subtype; those fields are
+  `null`/`"n/a"` in the API response when the model service is the source.
+- Gemini enrichment (when enabled) adds real latency (an extra vision API round-trip);
+  set `ENABLE_GEMINI_ENRICHMENT=false` for faster, model-only responses.
+
+---
+
+## Dissertation context
+
+See `psoriasis_ml/docs/` for the project proposal, dissertation notes, and references.
